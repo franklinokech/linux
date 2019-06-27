@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * I2C multiplexer using a single register
  *
  * Copyright 2015 Freescale Semiconductor
  * York Sun  <yorksun@freescale.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.
  */
 
 #include <linux/i2c.h>
@@ -127,10 +123,8 @@ static int i2c_mux_reg_probe_dt(struct regmux *mux,
 	values = devm_kcalloc(&pdev->dev,
 			      mux->data.n_values, sizeof(*mux->data.values),
 			      GFP_KERNEL);
-	if (!values) {
-		dev_err(&pdev->dev, "Cannot allocate values array");
+	if (!values)
 		return -ENOMEM;
-	}
 
 	for_each_child_of_node(np, child) {
 		of_property_read_u32(child, "reg", values + i);

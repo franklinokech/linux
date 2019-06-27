@@ -79,7 +79,7 @@ static __poll_t signalfd_poll(struct file *file, poll_table *wait)
  * Copied from copy_siginfo_to_user() in kernel/signal.c
  */
 static int signalfd_copyinfo(struct signalfd_siginfo __user *uinfo,
-			     siginfo_t const *kinfo)
+			     kernel_siginfo_t const *kinfo)
 {
 	struct signalfd_siginfo new;
 
@@ -163,7 +163,7 @@ static int signalfd_copyinfo(struct signalfd_siginfo __user *uinfo,
 	return sizeof(*uinfo);
 }
 
-static ssize_t signalfd_dequeue(struct signalfd_ctx *ctx, siginfo_t *info,
+static ssize_t signalfd_dequeue(struct signalfd_ctx *ctx, kernel_siginfo_t *info,
 				int nonblock)
 {
 	ssize_t ret;
@@ -176,6 +176,7 @@ static ssize_t signalfd_dequeue(struct signalfd_ctx *ctx, siginfo_t *info,
 		if (!nonblock)
 			break;
 		ret = -EAGAIN;
+		/* fall through */
 	default:
 		spin_unlock_irq(&current->sighand->siglock);
 		return ret;
@@ -215,7 +216,7 @@ static ssize_t signalfd_read(struct file *file, char __user *buf, size_t count,
 	struct signalfd_siginfo __user *siginfo;
 	int nonblock = file->f_flags & O_NONBLOCK;
 	ssize_t ret, total = 0;
-	siginfo_t info;
+	kernel_siginfo_t info;
 
 	count /= sizeof(struct signalfd_siginfo);
 	if (!count)
@@ -259,10 +260,8 @@ static const struct file_operations signalfd_fops = {
 	.llseek		= noop_llseek,
 };
 
-static int do_signalfd4(int ufd, sigset_t __user *user_mask, size_t sizemask,
-			int flags)
+static int do_signalfd4(int ufd, sigset_t *mask, int flags)
 {
-	sigset_t sigmask;
 	struct signalfd_ctx *ctx;
 
 	/* Check the SFD_* constants for consistency.  */
@@ -272,18 +271,15 @@ static int do_signalfd4(int ufd, sigset_t __user *user_mask, size_t sizemask,
 	if (flags & ~(SFD_CLOEXEC | SFD_NONBLOCK))
 		return -EINVAL;
 
-	if (sizemask != sizeof(sigset_t) ||
-	    copy_from_user(&sigmask, user_mask, sizeof(sigmask)))
-		return -EINVAL;
-	sigdelsetmask(&sigmask, sigmask(SIGKILL) | sigmask(SIGSTOP));
-	signotset(&sigmask);
+	sigdelsetmask(mask, sigmask(SIGKILL) | sigmask(SIGSTOP));
+	signotset(mask);
 
 	if (ufd == -1) {
 		ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
 		if (!ctx)
 			return -ENOMEM;
 
-		ctx->sigmask = sigmask;
+		ctx->sigmask = *mask;
 
 		/*
 		 * When we call this, the initialization must be complete, since
@@ -303,7 +299,7 @@ static int do_signalfd4(int ufd, sigset_t __user *user_mask, size_t sizemask,
 			return -EINVAL;
 		}
 		spin_lock_irq(&current->sighand->siglock);
-		ctx->sigmask = sigmask;
+		ctx->sigmask = *mask;
 		spin_unlock_irq(&current->sighand->siglock);
 
 		wake_up(&current->sighand->signalfd_wqh);
@@ -316,46 +312,51 @@ static int do_signalfd4(int ufd, sigset_t __user *user_mask, size_t sizemask,
 SYSCALL_DEFINE4(signalfd4, int, ufd, sigset_t __user *, user_mask,
 		size_t, sizemask, int, flags)
 {
-	return do_signalfd4(ufd, user_mask, sizemask, flags);
+	sigset_t mask;
+
+	if (sizemask != sizeof(sigset_t) ||
+	    copy_from_user(&mask, user_mask, sizeof(mask)))
+		return -EINVAL;
+	return do_signalfd4(ufd, &mask, flags);
 }
 
 SYSCALL_DEFINE3(signalfd, int, ufd, sigset_t __user *, user_mask,
 		size_t, sizemask)
 {
-	return do_signalfd4(ufd, user_mask, sizemask, 0);
+	sigset_t mask;
+
+	if (sizemask != sizeof(sigset_t) ||
+	    copy_from_user(&mask, user_mask, sizeof(mask)))
+		return -EINVAL;
+	return do_signalfd4(ufd, &mask, 0);
 }
 
 #ifdef CONFIG_COMPAT
 static long do_compat_signalfd4(int ufd,
-			const compat_sigset_t __user *sigmask,
+			const compat_sigset_t __user *user_mask,
 			compat_size_t sigsetsize, int flags)
 {
-	sigset_t tmp;
-	sigset_t __user *ksigmask;
+	sigset_t mask;
 
 	if (sigsetsize != sizeof(compat_sigset_t))
 		return -EINVAL;
-	if (get_compat_sigset(&tmp, sigmask))
+	if (get_compat_sigset(&mask, user_mask))
 		return -EFAULT;
-	ksigmask = compat_alloc_user_space(sizeof(sigset_t));
-	if (copy_to_user(ksigmask, &tmp, sizeof(sigset_t)))
-		return -EFAULT;
-
-	return do_signalfd4(ufd, ksigmask, sizeof(sigset_t), flags);
+	return do_signalfd4(ufd, &mask, flags);
 }
 
 COMPAT_SYSCALL_DEFINE4(signalfd4, int, ufd,
-		     const compat_sigset_t __user *, sigmask,
+		     const compat_sigset_t __user *, user_mask,
 		     compat_size_t, sigsetsize,
 		     int, flags)
 {
-	return do_compat_signalfd4(ufd, sigmask, sigsetsize, flags);
+	return do_compat_signalfd4(ufd, user_mask, sigsetsize, flags);
 }
 
 COMPAT_SYSCALL_DEFINE3(signalfd, int, ufd,
-		     const compat_sigset_t __user *,sigmask,
+		     const compat_sigset_t __user *, user_mask,
 		     compat_size_t, sigsetsize)
 {
-	return do_compat_signalfd4(ufd, sigmask, sigsetsize, 0);
+	return do_compat_signalfd4(ufd, user_mask, sigsetsize, 0);
 }
 #endif

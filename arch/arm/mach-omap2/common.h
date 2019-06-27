@@ -30,7 +30,7 @@
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/mfd/twl.h>
-#include <linux/i2c-omap.h>
+#include <linux/platform_data/i2c-omap.h>
 #include <linux/reboot.h>
 #include <linux/irqchip/irq-omap-intc.h>
 
@@ -333,6 +333,15 @@ static inline void omap5_secondary_startup(void)
 
 static inline void omap5_secondary_hyp_startup(void)
 {
+}
+#endif
+
+#ifdef CONFIG_SOC_DRA7XX
+extern int dra7xx_pciess_reset(struct omap_hwmod *oh);
+#else
+static inline int dra7xx_pciess_reset(struct omap_hwmod *oh)
+{
+	return 0;
 }
 #endif
 

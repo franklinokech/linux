@@ -76,6 +76,8 @@ struct dwc2_qh;
  *                      (micro)frame
  * @xfer_buf:           Pointer to current transfer buffer position
  * @xfer_dma:           DMA address of xfer_buf
+ * @align_buf:          In Buffer DMA mode this will be used if xfer_buf is not
+ *                      DWORD aligned
  * @xfer_len:           Total number of bytes to transfer
  * @xfer_count:         Number of bytes transferred so far
  * @start_pkt_count:    Packet count at start of transfer
@@ -133,6 +135,7 @@ struct dwc2_host_chan {
 
 	u8 *xfer_buf;
 	dma_addr_t xfer_dma;
+	dma_addr_t align_buf;
 	u32 xfer_len;
 	u32 xfer_count;
 	u16 start_pkt_count;
@@ -168,7 +171,8 @@ struct dwc2_hcd_pipe_info {
 	u8 ep_num;
 	u8 pipe_type;
 	u8 pipe_dir;
-	u16 mps;
+	u16 maxp;
+	u16 maxp_mult;
 };
 
 struct dwc2_hcd_iso_packet_desc {
@@ -261,6 +265,7 @@ struct dwc2_hs_transfer_time {
  *                       - USB_ENDPOINT_XFER_ISOC
  * @ep_is_in:           Endpoint direction
  * @maxp:               Value from wMaxPacketSize field of Endpoint Descriptor
+ * @maxp_mult:          Multiplier for maxp
  * @dev_speed:          Device speed. One of the following values:
  *                       - USB_SPEED_LOW
  *                       - USB_SPEED_FULL
@@ -302,6 +307,9 @@ struct dwc2_hs_transfer_time {
  *                           speed.  Note that this is in "schedule slice" which
  *                           is tightly packed.
  * @ntd:                Actual number of transfer descriptors in a list
+ * @dw_align_buf:       Used instead of original buffer if its physical address
+ *                      is not dword-aligned
+ * @dw_align_buf_dma:   DMA address for dw_align_buf
  * @qtd_list:           List of QTDs for this QH
  * @channel:            Host channel currently processing transfers for this QH
  * @qh_list_entry:      Entry for QH in either the periodic or non-periodic
@@ -334,6 +342,7 @@ struct dwc2_qh {
 	u8 ep_type;
 	u8 ep_is_in;
 	u16 maxp;
+	u16 maxp_mult;
 	u8 dev_speed;
 	u8 data_toggle;
 	u8 ping_state;
@@ -350,6 +359,8 @@ struct dwc2_qh {
 	struct dwc2_hs_transfer_time hs_transfers[DWC2_HS_SCHEDULE_UFRAMES];
 	u32 ls_start_schedule_slice;
 	u16 ntd;
+	u8 *dw_align_buf;
+	dma_addr_t dw_align_buf_dma;
 	struct list_head qtd_list;
 	struct dwc2_host_chan *channel;
 	struct list_head qh_list_entry;
@@ -358,7 +369,7 @@ struct dwc2_qh {
 	u32 desc_list_sz;
 	u32 *n_bytes;
 	struct timer_list unreserve_timer;
-	struct timer_list wait_timer;
+	struct hrtimer wait_timer;
 	struct dwc2_tt *dwc_tt;
 	int ttport;
 	unsigned tt_buffer_dirty:1;
@@ -461,10 +472,10 @@ static inline struct usb_hcd *dwc2_hsotg_to_hcd(struct dwc2_hsotg *hsotg)
  */
 static inline void disable_hc_int(struct dwc2_hsotg *hsotg, int chnum, u32 intr)
 {
-	u32 mask = dwc2_readl(hsotg->regs + HCINTMSK(chnum));
+	u32 mask = dwc2_readl(hsotg, HCINTMSK(chnum));
 
 	mask &= ~intr;
-	dwc2_writel(mask, hsotg->regs + HCINTMSK(chnum));
+	dwc2_writel(hsotg, mask, HCINTMSK(chnum));
 }
 
 void dwc2_hc_cleanup(struct dwc2_hsotg *hsotg, struct dwc2_host_chan *chan);
@@ -479,7 +490,7 @@ void dwc2_hc_start_transfer_ddma(struct dwc2_hsotg *hsotg,
  */
 static inline u32 dwc2_read_hprt0(struct dwc2_hsotg *hsotg)
 {
-	u32 hprt0 = dwc2_readl(hsotg->regs + HPRT0);
+	u32 hprt0 = dwc2_readl(hsotg, HPRT0);
 
 	hprt0 &= ~(HPRT0_ENA | HPRT0_CONNDET | HPRT0_ENACHG | HPRT0_OVRCURRCHG);
 	return hprt0;
@@ -495,9 +506,14 @@ static inline u8 dwc2_hcd_get_pipe_type(struct dwc2_hcd_pipe_info *pipe)
 	return pipe->pipe_type;
 }
 
-static inline u16 dwc2_hcd_get_mps(struct dwc2_hcd_pipe_info *pipe)
+static inline u16 dwc2_hcd_get_maxp(struct dwc2_hcd_pipe_info *pipe)
 {
-	return pipe->mps;
+	return pipe->maxp;
+}
+
+static inline u16 dwc2_hcd_get_maxp_mult(struct dwc2_hcd_pipe_info *pipe)
+{
+	return pipe->maxp_mult;
 }
 
 static inline u8 dwc2_hcd_get_dev_addr(struct dwc2_hcd_pipe_info *pipe)
@@ -612,12 +628,6 @@ static inline bool dbg_urb(struct urb *urb)
 static inline bool dbg_perio(void) { return false; }
 #endif
 
-/* High bandwidth multiplier as encoded in highspeed endpoint descriptors */
-#define dwc2_hb_mult(wmaxpacketsize) (1 + (((wmaxpacketsize) >> 11) & 0x03))
-
-/* Packet size for any kind of endpoint descriptor */
-#define dwc2_max_packet(wmaxpacketsize) ((wmaxpacketsize) & 0x07ff)
-
 /*
  * Returns true if frame1 index is greater than frame2 index. The comparison
  * is done modulo FRLISTEN_64_SIZE. This accounts for the rollover of the
@@ -682,8 +692,8 @@ static inline u16 dwc2_micro_frame_num(u16 frame)
  */
 static inline u32 dwc2_read_core_intr(struct dwc2_hsotg *hsotg)
 {
-	return dwc2_readl(hsotg->regs + GINTSTS) &
-	       dwc2_readl(hsotg->regs + GINTMSK);
+	return dwc2_readl(hsotg, GINTSTS) &
+	       dwc2_readl(hsotg, GINTMSK);
 }
 
 static inline u32 dwc2_hcd_urb_get_status(struct dwc2_hcd_urb *dwc2_urb)

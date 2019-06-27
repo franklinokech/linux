@@ -1,9 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008-2009 Patrick McHardy <kaber@trash.net>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * Development of this code funded by Astaro AG (http://www.astaro.com/)
  */
@@ -17,9 +14,9 @@
 #include <net/netfilter/nf_tables_core.h>
 #include <net/netfilter/nf_tables.h>
 
-static void nft_immediate_eval(const struct nft_expr *expr,
-			       struct nft_regs *regs,
-			       const struct nft_pktinfo *pkt)
+void nft_immediate_eval(const struct nft_expr *expr,
+			struct nft_regs *regs,
+			const struct nft_pktinfo *pkt)
 {
 	const struct nft_immediate_expr *priv = nft_expr_priv(expr);
 
@@ -72,9 +69,13 @@ static void nft_immediate_activate(const struct nft_ctx *ctx,
 }
 
 static void nft_immediate_deactivate(const struct nft_ctx *ctx,
-				     const struct nft_expr *expr)
+				     const struct nft_expr *expr,
+				     enum nft_trans_phase phase)
 {
 	const struct nft_immediate_expr *priv = nft_expr_priv(expr);
+
+	if (phase == NFT_TRANS_COMMIT)
+		return;
 
 	return nft_data_release(&priv->data, nft_dreg_to_type(priv->dreg));
 }
@@ -98,6 +99,7 @@ static int nft_immediate_validate(const struct nft_ctx *ctx,
 				  const struct nft_data **d)
 {
 	const struct nft_immediate_expr *priv = nft_expr_priv(expr);
+	struct nft_ctx *pctx = (struct nft_ctx *)ctx;
 	const struct nft_data *data;
 	int err;
 
@@ -109,9 +111,11 @@ static int nft_immediate_validate(const struct nft_ctx *ctx,
 	switch (data->verdict.code) {
 	case NFT_JUMP:
 	case NFT_GOTO:
+		pctx->level++;
 		err = nft_chain_validate(ctx, data->verdict.chain);
 		if (err < 0)
 			return err;
+		pctx->level--;
 		break;
 	default:
 		break;

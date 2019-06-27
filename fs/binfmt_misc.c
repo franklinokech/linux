@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * binfmt_misc.c
  *
  * Copyright (C) 1997 Richard Günther
  *
  * binfmt_misc detects binaries via a magic or filename extension and invokes
- * a specified wrapper. See Documentation/binfmt_misc.txt for more details.
+ * a specified wrapper. See Documentation/admin-guide/binfmt-misc.rst for more details.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -205,7 +206,7 @@ static int load_misc_binary(struct linux_binprm *bprm)
 		goto error;
 
 	if (fmt->flags & MISC_FMT_OPEN_FILE) {
-		interp_file = filp_clone_open(fmt->interp_file);
+		interp_file = file_clone_open(fmt->interp_file);
 		if (!IS_ERR(interp_file))
 			deny_write_access(interp_file);
 	} else {

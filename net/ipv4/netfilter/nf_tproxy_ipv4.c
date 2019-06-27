@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2007-2008 BalaBit IT Ltd.
  * Author: Krisztian Kovacs
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
  */
 
 #include <net/netfilter/nf_tproxy.h>
@@ -37,7 +33,7 @@ nf_tproxy_handle_time_wait4(struct net *net, struct sk_buff *skb,
 		 * to a listener socket if there's one */
 		struct sock *sk2;
 
-		sk2 = nf_tproxy_get_sock_v4(net, skb, hp, iph->protocol,
+		sk2 = nf_tproxy_get_sock_v4(net, skb, iph->protocol,
 					    iph->saddr, laddr ? laddr : iph->daddr,
 					    hp->source, lport ? lport : hp->dest,
 					    skb->dev, NF_TPROXY_LOOKUP_LISTENER);
@@ -71,7 +67,7 @@ __be32 nf_tproxy_laddr4(struct sk_buff *skb, __be32 user_laddr, __be32 daddr)
 EXPORT_SYMBOL_GPL(nf_tproxy_laddr4);
 
 struct sock *
-nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb, void *hp,
+nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb,
 		      const u8 protocol,
 		      const __be32 saddr, const __be32 daddr,
 		      const __be16 sport, const __be16 dport,
@@ -79,16 +75,21 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb, void *hp,
 		      const enum nf_tproxy_lookup_t lookup_type)
 {
 	struct sock *sk;
-	struct tcphdr *tcph;
 
 	switch (protocol) {
-	case IPPROTO_TCP:
+	case IPPROTO_TCP: {
+		struct tcphdr _hdr, *hp;
+
+		hp = skb_header_pointer(skb, ip_hdrlen(skb),
+					sizeof(struct tcphdr), &_hdr);
+		if (hp == NULL)
+			return NULL;
+
 		switch (lookup_type) {
 		case NF_TPROXY_LOOKUP_LISTENER:
-			tcph = hp;
 			sk = inet_lookup_listener(net, &tcp_hashinfo, skb,
 						    ip_hdrlen(skb) +
-						      __tcp_hdrlen(tcph),
+						      __tcp_hdrlen(hp),
 						    saddr, sport,
 						    daddr, dport,
 						    in->ifindex, 0);
@@ -110,6 +111,7 @@ nf_tproxy_get_sock_v4(struct net *net, struct sk_buff *skb, void *hp,
 			BUG();
 		}
 		break;
+		}
 	case IPPROTO_UDP:
 		sk = udp4_lib_lookup(net, saddr, sport, daddr, dport,
 				     in->ifindex);

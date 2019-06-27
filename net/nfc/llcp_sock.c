@@ -1,18 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2011  Intel Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #define pr_fmt(fmt) "llcp: %s: " fmt, __func__
@@ -548,12 +536,15 @@ static inline __poll_t llcp_accept_poll(struct sock *parent)
 	return 0;
 }
 
-static __poll_t llcp_sock_poll_mask(struct socket *sock, __poll_t events)
+static __poll_t llcp_sock_poll(struct file *file, struct socket *sock,
+				   poll_table *wait)
 {
 	struct sock *sk = sock->sk;
 	__poll_t mask = 0;
 
 	pr_debug("%p\n", sk);
+
+	sock_poll_wait(file, sock, wait);
 
 	if (sk->sk_state == LLCP_LISTEN)
 		return llcp_accept_poll(sk);
@@ -723,6 +714,10 @@ static int llcp_sock_connect(struct socket *sock, struct sockaddr *_addr,
 	llcp_sock->service_name = kmemdup(addr->service_name,
 					  llcp_sock->service_name_len,
 					  GFP_KERNEL);
+	if (!llcp_sock->service_name) {
+		ret = -ENOMEM;
+		goto sock_llcp_release;
+	}
 
 	nfc_llcp_sock_link(&local->connecting_sockets, sk);
 
@@ -742,9 +737,10 @@ static int llcp_sock_connect(struct socket *sock, struct sockaddr *_addr,
 	return ret;
 
 sock_unlink:
-	nfc_llcp_put_ssap(local, llcp_sock->ssap);
-
 	nfc_llcp_sock_unlink(&local->connecting_sockets, sk);
+
+sock_llcp_release:
+	nfc_llcp_put_ssap(local, llcp_sock->ssap);
 
 put_dev:
 	nfc_put_device(dev);
@@ -896,7 +892,7 @@ static const struct proto_ops llcp_sock_ops = {
 	.socketpair     = sock_no_socketpair,
 	.accept         = llcp_sock_accept,
 	.getname        = llcp_sock_getname,
-	.poll_mask      = llcp_sock_poll_mask,
+	.poll           = llcp_sock_poll,
 	.ioctl          = sock_no_ioctl,
 	.listen         = llcp_sock_listen,
 	.shutdown       = sock_no_shutdown,
@@ -916,7 +912,7 @@ static const struct proto_ops llcp_rawsock_ops = {
 	.socketpair     = sock_no_socketpair,
 	.accept         = sock_no_accept,
 	.getname        = llcp_sock_getname,
-	.poll_mask      = llcp_sock_poll_mask,
+	.poll           = llcp_sock_poll,
 	.ioctl          = sock_no_ioctl,
 	.listen         = sock_no_listen,
 	.shutdown       = sock_no_shutdown,

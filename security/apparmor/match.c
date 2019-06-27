@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AppArmor security module
  *
@@ -5,11 +6,6 @@
  *
  * Copyright (C) 1998-2008 Novell/SUSE
  * Copyright 2009-2012 Canonical Ltd.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation, version 2 of the
- * License.
  */
 
 #include <linux/errno.h>
@@ -472,7 +468,7 @@ unsigned int aa_dfa_match(struct aa_dfa *dfa, unsigned int start,
 
 /**
  * aa_dfa_next - step one character to the next state in the dfa
- * @dfa: the dfa to tranverse (NOT NULL)
+ * @dfa: the dfa to traverse (NOT NULL)
  * @state: the state to start in
  * @c: the input character to transition on
  *

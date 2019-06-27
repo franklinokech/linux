@@ -1,12 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * DWMAC4 DMA Header file.
  *
- *
  * Copyright (C) 2007-2015  STMicroelectronics Ltd
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
  *
  * Author: Alexandre Torgue <alexandre.torgue@st.com>
  */
@@ -120,6 +116,8 @@
 
 /* DMA Rx Channel X Control register defines */
 #define DMA_CONTROL_SR			BIT(0)
+#define DMA_RBSZ_MASK			GENMASK(14, 1)
+#define DMA_RBSZ_SHIFT			1
 
 /* Interrupt status per channel */
 #define DMA_CHAN_STATUS_REB		GENMASK(21, 19)

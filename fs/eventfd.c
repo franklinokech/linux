@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  fs/eventfd.c
  *
@@ -21,6 +22,9 @@
 #include <linux/eventfd.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/idr.h>
+
+static DEFINE_IDA(eventfd_ida);
 
 struct eventfd_ctx {
 	struct kref kref;
@@ -35,6 +39,7 @@ struct eventfd_ctx {
 	 */
 	__u64 count;
 	unsigned int flags;
+	int id;
 };
 
 /**
@@ -69,6 +74,8 @@ EXPORT_SYMBOL_GPL(eventfd_signal);
 
 static void eventfd_free_ctx(struct eventfd_ctx *ctx)
 {
+	if (ctx->id >= 0)
+		ida_simple_remove(&eventfd_ida, ctx->id);
 	kfree(ctx);
 }
 
@@ -101,19 +108,13 @@ static int eventfd_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static struct wait_queue_head *
-eventfd_get_poll_head(struct file *file, __poll_t events)
-{
-	struct eventfd_ctx *ctx = file->private_data;
-
-	return &ctx->wqh;
-}
-
-static __poll_t eventfd_poll_mask(struct file *file, __poll_t eventmask)
+static __poll_t eventfd_poll(struct file *file, poll_table *wait)
 {
 	struct eventfd_ctx *ctx = file->private_data;
 	__poll_t events = 0;
 	u64 count;
+
+	poll_wait(file, &ctx->wqh, wait);
 
 	/*
 	 * All writes to ctx->count occur within ctx->wqh.lock.  This read
@@ -303,6 +304,7 @@ static void eventfd_show_fdinfo(struct seq_file *m, struct file *f)
 	seq_printf(m, "eventfd-count: %16llx\n",
 		   (unsigned long long)ctx->count);
 	spin_unlock_irq(&ctx->wqh.lock);
+	seq_printf(m, "eventfd-id: %d\n", ctx->id);
 }
 #endif
 
@@ -311,8 +313,7 @@ static const struct file_operations eventfd_fops = {
 	.show_fdinfo	= eventfd_show_fdinfo,
 #endif
 	.release	= eventfd_release,
-	.get_poll_head	= eventfd_get_poll_head,
-	.poll_mask	= eventfd_poll_mask,
+	.poll		= eventfd_poll,
 	.read		= eventfd_read,
 	.write		= eventfd_write,
 	.llseek		= noop_llseek,
@@ -407,6 +408,7 @@ static int do_eventfd(unsigned int count, int flags)
 	init_waitqueue_head(&ctx->wqh);
 	ctx->count = count;
 	ctx->flags = flags;
+	ctx->id = ida_simple_get(&eventfd_ida, 0, 0, GFP_KERNEL);
 
 	fd = anon_inode_getfd("[eventfd]", &eventfd_fops, ctx,
 			      O_RDWR | (flags & EFD_SHARED_FCNTL_FLAGS));

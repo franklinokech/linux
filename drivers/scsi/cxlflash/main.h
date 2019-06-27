@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * CXL Flash Device Driver
  *
@@ -5,11 +6,6 @@
  *             Matthew R. Ochs <mrochs@linux.vnet.ibm.com>, IBM Corporation
  *
  * Copyright (C) 2015 IBM Corporation
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 #ifndef _CXLFLASH_MAIN_H
@@ -107,12 +103,12 @@ cxlflash_assign_ops(struct dev_dependent_vals *ddv)
 {
 	const struct cxlflash_backend_ops *ops = NULL;
 
-#ifdef CONFIG_OCXL
+#ifdef CONFIG_OCXL_BASE
 	if (ddv->flags & CXLFLASH_OCXL_DEV)
 		ops = &cxlflash_ocxl_ops;
 #endif
 
-#ifdef CONFIG_CXL
+#ifdef CONFIG_CXL_BASE
 	if (!(ddv->flags & CXLFLASH_OCXL_DEV))
 		ops = &cxlflash_cxl_ops;
 #endif

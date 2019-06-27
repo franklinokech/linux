@@ -206,8 +206,9 @@ replay:
 			return -ENOMEM;
 		}
 
-		err = nla_parse(cda, ss->cb[cb_id].attr_count, attr, attrlen,
-				ss->cb[cb_id].policy, extack);
+		err = nla_parse_deprecated(cda, ss->cb[cb_id].attr_count,
+					   attr, attrlen,
+					   ss->cb[cb_id].policy, extack);
 		if (err < 0) {
 			rcu_read_unlock();
 			return err;
@@ -331,17 +332,26 @@ replay:
 		}
 	}
 
-	if (!ss->commit || !ss->abort) {
+	if (!ss->valid_genid || !ss->commit || !ss->abort) {
 		nfnl_unlock(subsys_id);
 		netlink_ack(oskb, nlh, -EOPNOTSUPP, NULL);
 		return kfree_skb(skb);
 	}
 
-	if (genid && ss->valid_genid && !ss->valid_genid(net, genid)) {
+	if (!try_module_get(ss->owner)) {
+		nfnl_unlock(subsys_id);
+		netlink_ack(oskb, nlh, -EOPNOTSUPP, NULL);
+		return kfree_skb(skb);
+	}
+
+	if (!ss->valid_genid(net, genid)) {
+		module_put(ss->owner);
 		nfnl_unlock(subsys_id);
 		netlink_ack(oskb, nlh, -ERESTART, NULL);
 		return kfree_skb(skb);
 	}
+
+	nfnl_unlock(subsys_id);
 
 	while (skb->len >= nlmsg_total_size(0)) {
 		int msglen, type;
@@ -412,8 +422,10 @@ replay:
 				goto ack;
 			}
 
-			err = nla_parse(cda, ss->cb[cb_id].attr_count, attr,
-					attrlen, ss->cb[cb_id].policy, NULL);
+			err = nla_parse_deprecated(cda,
+						   ss->cb[cb_id].attr_count,
+						   attr, attrlen,
+						   ss->cb[cb_id].policy, NULL);
 			if (err < 0)
 				goto ack;
 
@@ -429,7 +441,7 @@ replay:
 			 */
 			if (err == -EAGAIN) {
 				status |= NFNL_BATCH_REPLAY;
-				goto next;
+				goto done;
 			}
 		}
 ack:
@@ -456,7 +468,7 @@ ack:
 			if (err)
 				status |= NFNL_BATCH_FAILURE;
 		}
-next:
+
 		msglen = NLMSG_ALIGN(nlh->nlmsg_len);
 		if (msglen > skb->len)
 			msglen = skb->len;
@@ -466,8 +478,8 @@ done:
 	if (status & NFNL_BATCH_REPLAY) {
 		ss->abort(net, oskb);
 		nfnl_err_reset(&err_list);
-		nfnl_unlock(subsys_id);
 		kfree_skb(skb);
+		module_put(ss->owner);
 		goto replay;
 	} else if (status == NFNL_BATCH_DONE) {
 		err = ss->commit(net, oskb);
@@ -485,8 +497,8 @@ done:
 		ss->cleanup(net);
 
 	nfnl_err_deliver(&err_list, oskb);
-	nfnl_unlock(subsys_id);
 	kfree_skb(skb);
+	module_put(ss->owner);
 }
 
 static const struct nla_policy nfnl_batch_policy[NFNL_BATCH_MAX + 1] = {
@@ -511,8 +523,8 @@ static void nfnetlink_rcv_skb_batch(struct sk_buff *skb, struct nlmsghdr *nlh)
 	if (skb->len < NLMSG_HDRLEN + sizeof(struct nfgenmsg))
 		return;
 
-	err = nla_parse(cda, NFNL_BATCH_MAX, attr, attrlen, nfnl_batch_policy,
-			NULL);
+	err = nla_parse_deprecated(cda, NFNL_BATCH_MAX, attr, attrlen,
+				   nfnl_batch_policy, NULL);
 	if (err < 0) {
 		netlink_ack(skb, nlh, err, NULL);
 		return;

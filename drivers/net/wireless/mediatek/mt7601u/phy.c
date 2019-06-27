@@ -1,16 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * (c) Copyright 2002-2010, Ralink Technology, Inc.
  * Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
  * Copyright (C) 2015 Jakub Kicinski <kubakici@wp.pl>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include "mt7601u.h"
@@ -986,13 +978,15 @@ static void mt7601u_agc_tune(struct mt7601u_dev *dev)
 	 */
 	spin_lock_bh(&dev->con_mon_lock);
 	avg_rssi = ewma_rssi_read(&dev->avg_rssi);
-	WARN_ON_ONCE(avg_rssi == 0);
+	spin_unlock_bh(&dev->con_mon_lock);
+	if (avg_rssi == 0)
+		return;
+
 	avg_rssi = -avg_rssi;
 	if (avg_rssi <= -70)
 		val -= 0x20;
 	else if (avg_rssi <= -60)
 		val -= 0x10;
-	spin_unlock_bh(&dev->con_mon_lock);
 
 	if (val != mt7601u_bbp_rr(dev, 66))
 		mt7601u_bbp_wr(dev, 66, val);

@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Kernel Connection Multiplexor
  *
  * Copyright (c) 2016 Tom Herbert <tom@herbertland.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
  */
 
 #include <linux/bpf.h>
@@ -1336,9 +1333,9 @@ static void init_kcm_sock(struct kcm_sock *kcm, struct kcm_mux *mux)
 	struct list_head *head;
 	int index = 0;
 
-	/* For SOCK_SEQPACKET sock type, datagram_poll_mask checks the sk_state,
-	 * so  we set sk_state, otherwise epoll_wait always returns right away
-	 * with EPOLLHUP
+	/* For SOCK_SEQPACKET sock type, datagram_poll checks the sk_state, so
+	 * we set sk_state, otherwise epoll_wait always returns right away with
+	 * EPOLLHUP
 	 */
 	kcm->sk.sk_state = TCP_ESTABLISHED;
 
@@ -1903,7 +1900,7 @@ static const struct proto_ops kcm_dgram_ops = {
 	.socketpair =	sock_no_socketpair,
 	.accept =	sock_no_accept,
 	.getname =	sock_no_getname,
-	.poll_mask =	datagram_poll_mask,
+	.poll =		datagram_poll,
 	.ioctl =	kcm_ioctl,
 	.listen =	sock_no_listen,
 	.shutdown =	sock_no_shutdown,
@@ -1924,7 +1921,7 @@ static const struct proto_ops kcm_seqpacket_ops = {
 	.socketpair =	sock_no_socketpair,
 	.accept =	sock_no_accept,
 	.getname =	sock_no_getname,
-	.poll_mask =	datagram_poll_mask,
+	.poll =		datagram_poll,
 	.ioctl =	kcm_ioctl,
 	.listen =	sock_no_listen,
 	.shutdown =	sock_no_shutdown,
@@ -2036,13 +2033,13 @@ static int __init kcm_init(void)
 
 	kcm_muxp = kmem_cache_create("kcm_mux_cache",
 				     sizeof(struct kcm_mux), 0,
-				     SLAB_HWCACHE_ALIGN | SLAB_PANIC, NULL);
+				     SLAB_HWCACHE_ALIGN, NULL);
 	if (!kcm_muxp)
 		goto fail;
 
 	kcm_psockp = kmem_cache_create("kcm_psock_cache",
 				       sizeof(struct kcm_psock), 0,
-					SLAB_HWCACHE_ALIGN | SLAB_PANIC, NULL);
+					SLAB_HWCACHE_ALIGN, NULL);
 	if (!kcm_psockp)
 		goto fail;
 
@@ -2054,13 +2051,13 @@ static int __init kcm_init(void)
 	if (err)
 		goto fail;
 
-	err = sock_register(&kcm_family_ops);
-	if (err)
-		goto sock_register_fail;
-
 	err = register_pernet_device(&kcm_net_ops);
 	if (err)
 		goto net_ops_fail;
+
+	err = sock_register(&kcm_family_ops);
+	if (err)
+		goto sock_register_fail;
 
 	err = kcm_proc_init();
 	if (err)
@@ -2069,12 +2066,12 @@ static int __init kcm_init(void)
 	return 0;
 
 proc_init_fail:
-	unregister_pernet_device(&kcm_net_ops);
-
-net_ops_fail:
 	sock_unregister(PF_KCM);
 
 sock_register_fail:
+	unregister_pernet_device(&kcm_net_ops);
+
+net_ops_fail:
 	proto_unregister(&kcm_proto);
 
 fail:
@@ -2090,8 +2087,8 @@ fail:
 static void __exit kcm_exit(void)
 {
 	kcm_proc_exit();
-	unregister_pernet_device(&kcm_net_ops);
 	sock_unregister(PF_KCM);
+	unregister_pernet_device(&kcm_net_ops);
 	proto_unregister(&kcm_proto);
 	destroy_workqueue(kcm_wq);
 
@@ -2104,4 +2101,3 @@ module_exit(kcm_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_NETPROTO(PF_KCM);
-

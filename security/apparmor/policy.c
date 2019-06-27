@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * AppArmor security module
  *
@@ -5,12 +6,6 @@
  *
  * Copyright (C) 1998-2008 Novell/SUSE
  * Copyright 2009-2010 Canonical Ltd.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation, version 2 of the
- * License.
- *
  *
  * AppArmor policy is based around profiles, which contain the rules a
  * task is confined by.  Every task in the system has a profile attached
@@ -231,6 +226,9 @@ void aa_free_profile(struct aa_profile *profile)
 	for (i = 0; i < profile->xattr_count; i++)
 		kzfree(profile->xattrs[i]);
 	kzfree(profile->xattrs);
+	for (i = 0; i < profile->secmark_count; i++)
+		kzfree(profile->secmark[i].label);
+	kzfree(profile->secmark);
 	kzfree(profile->dirname);
 	aa_put_dfa(profile->xmatch);
 	aa_put_dfa(profile->policy.dfa);
@@ -268,7 +266,7 @@ struct aa_profile *aa_alloc_profile(const char *hname, struct aa_proxy *proxy,
 
 	if (!aa_policy_init(&profile->base, NULL, hname, gfp))
 		goto fail;
-	if (!aa_label_init(&profile->label, 1))
+	if (!aa_label_init(&profile->label, 1, gfp))
 		goto fail;
 
 	/* update being set needed by fs interface */
@@ -1008,6 +1006,9 @@ ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 			audit_policy(label, op, ns_name, ent->new->base.hname,
 				     "same as current profile, skipping",
 				     error);
+			/* break refcount cycle with proxy. */
+			aa_put_proxy(ent->new->label.proxy);
+			ent->new->label.proxy = NULL;
 			goto skip;
 		}
 
@@ -1085,7 +1086,7 @@ fail:
  * Remove a profile or sub namespace from the current namespace, so that
  * they can not be found anymore and mark them as replaced by unconfined
  *
- * NOTE: removing confinement does not restore rlimits to preconfinemnet values
+ * NOTE: removing confinement does not restore rlimits to preconfinement values
  *
  * Returns: size of data consume else error code if fails
  */

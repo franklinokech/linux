@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /* Crypto operations using stored keys
  *
  * Copyright (c) 2016, Intel Corporation
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/slab.h>
@@ -112,7 +108,6 @@ static int kdf_alloc(struct kdf_sdesc **sdesc_ret, char *hashname)
 	if (!sdesc)
 		goto out_free_tfm;
 	sdesc->shash.tfm = tfm;
-	sdesc->shash.flags = 0x0;
 
 	*sdesc_ret = sdesc;
 
@@ -142,6 +137,8 @@ static void kdf_dealloc(struct kdf_sdesc *sdesc)
  * The src pointer is defined as Z || other info where Z is the shared secret
  * from DH and other info is an arbitrary string (see SP800-56A section
  * 5.8.1.2).
+ *
+ * 'dlen' must be a multiple of the digest size.
  */
 static int kdf_ctr(struct kdf_sdesc *sdesc, const u8 *src, unsigned int slen,
 		   u8 *dst, unsigned int dlen, unsigned int zlen)
@@ -205,8 +202,8 @@ static int keyctl_dh_compute_kdf(struct kdf_sdesc *sdesc,
 {
 	uint8_t *outbuf = NULL;
 	int ret;
-	size_t outbuf_len = round_up(buflen,
-			             crypto_shash_digestsize(sdesc->shash.tfm));
+	size_t outbuf_len = roundup(buflen,
+				    crypto_shash_digestsize(sdesc->shash.tfm));
 
 	outbuf = kmalloc(outbuf_len, GFP_KERNEL);
 	if (!outbuf) {
@@ -315,7 +312,7 @@ long __keyctl_dh_compute(struct keyctl_dh_params __user *params,
 	if (ret)
 		goto out3;
 
-	tfm = crypto_alloc_kpp("dh", CRYPTO_ALG_TYPE_KPP, 0);
+	tfm = crypto_alloc_kpp("dh", 0, 0);
 	if (IS_ERR(tfm)) {
 		ret = PTR_ERR(tfm);
 		goto out3;

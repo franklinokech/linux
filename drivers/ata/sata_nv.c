@@ -1,24 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  sata_nv.c - NVIDIA nForce SATA
  *
  *  Copyright 2004 NVIDIA Corp.  All rights reserved.
  *  Copyright 2004 Andrew Chew
- *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2, or (at your option)
- *  any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; see the file COPYING.  If not, write to
- *  the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
- *
  *
  *  libata documentation is available via 'make {ps|pdf}docs',
  *  as Documentation/driver-api/libata.rst
@@ -33,7 +18,6 @@
  *  similar to the ADMA specification (with some modifications).
  *  This allows the use of NCQ. Non-DMA-mapped ATA commands are still
  *  sent through the legacy interface.
- *
  */
 
 #include <linux/kernel.h>
@@ -675,7 +659,6 @@ static int nv_adma_slave_config(struct scsi_device *sdev)
 	struct ata_port *ap = ata_shost_to_port(sdev->host);
 	struct nv_adma_port_priv *pp = ap->private_data;
 	struct nv_adma_port_priv *port0, *port1;
-	struct scsi_device *sdev0, *sdev1;
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
 	unsigned long segment_boundary, flags;
 	unsigned short sg_tablesize;
@@ -736,8 +719,6 @@ static int nv_adma_slave_config(struct scsi_device *sdev)
 
 	port0 = ap->host->ports[0]->private_data;
 	port1 = ap->host->ports[1]->private_data;
-	sdev0 = ap->host->ports[0]->link.device[0].sdev;
-	sdev1 = ap->host->ports[1]->link.device[0].sdev;
 	if ((port0->flags & NV_ADMA_ATAPI_SETUP_COMPLETE) ||
 	    (port1->flags & NV_ADMA_ATAPI_SETUP_COMPLETE)) {
 		/*

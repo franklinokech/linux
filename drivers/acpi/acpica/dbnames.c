@@ -322,6 +322,7 @@ acpi_db_walk_and_match_name(acpi_handle obj_handle,
 		acpi_os_printf("Could Not get pathname for object %p\n",
 			       obj_handle);
 	} else {
+		info.count = 0;
 		info.owner_id = ACPI_OWNER_ID_MAX;
 		info.debug_level = ACPI_UINT32_MAX;
 		info.display_type = ACPI_DISPLAY_SUMMARY | ACPI_DISPLAY_SHORT;
@@ -353,7 +354,7 @@ acpi_status acpi_db_find_name_in_namespace(char *name_arg)
 	char acpi_name[5] = "____";
 	char *acpi_name_ptr = acpi_name;
 
-	if (strlen(name_arg) > ACPI_NAME_SIZE) {
+	if (strlen(name_arg) > ACPI_NAMESEG_SIZE) {
 		acpi_os_printf("Name must be no longer than 4 characters\n");
 		return (AE_OK);
 	}
@@ -903,7 +904,7 @@ acpi_db_bus_walk(acpi_handle obj_handle,
  *
  * RETURN:      None
  *
- * DESCRIPTION: Display info about system busses.
+ * DESCRIPTION: Display info about system buses.
  *
  ******************************************************************************/
 

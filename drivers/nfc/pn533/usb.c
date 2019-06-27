@@ -1,21 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for NXP PN533 NFC Chip - USB transport layer
  *
  * Copyright (C) 2011 Instituto Nokia de Tecnologia
  * Copyright (C) 2012-2013 Tieto Poland
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/device.h>
@@ -74,7 +62,7 @@ static void pn533_recv_response(struct urb *urb)
 	struct sk_buff *skb = NULL;
 
 	if (!urb->status) {
-		skb = alloc_skb(urb->actual_length, GFP_KERNEL);
+		skb = alloc_skb(urb->actual_length, GFP_ATOMIC);
 		if (!skb) {
 			nfc_err(&phy->udev->dev, "failed to alloc memory\n");
 		} else {
@@ -186,7 +174,7 @@ static int pn533_usb_send_frame(struct pn533 *dev,
 
 	if (dev->protocol_type == PN533_PROTO_REQ_RESP) {
 		/* request for response for sent packet directly */
-		rc = pn533_submit_urb_for_response(phy, GFP_ATOMIC);
+		rc = pn533_submit_urb_for_response(phy, GFP_KERNEL);
 		if (rc)
 			goto error;
 	} else if (dev->protocol_type == PN533_PROTO_REQ_ACK_RESP) {

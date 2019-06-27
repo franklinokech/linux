@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * (C) 1997 Linus Torvalds
  * (C) 1999 Andrea Arcangeli <andrea@suse.de> (dynamic inode allocation)
@@ -10,7 +11,7 @@
 #include <linux/swap.h>
 #include <linux/security.h>
 #include <linux/cdev.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/fsnotify.h>
 #include <linux/mount.h>
 #include <linux/posix_acl.h>
@@ -202,12 +203,28 @@ out:
 }
 EXPORT_SYMBOL(inode_init_always);
 
+void free_inode_nonrcu(struct inode *inode)
+{
+	kmem_cache_free(inode_cachep, inode);
+}
+EXPORT_SYMBOL(free_inode_nonrcu);
+
+static void i_callback(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+	if (inode->free_inode)
+		inode->free_inode(inode);
+	else
+		free_inode_nonrcu(inode);
+}
+
 static struct inode *alloc_inode(struct super_block *sb)
 {
+	const struct super_operations *ops = sb->s_op;
 	struct inode *inode;
 
-	if (sb->s_op->alloc_inode)
-		inode = sb->s_op->alloc_inode(sb);
+	if (ops->alloc_inode)
+		inode = ops->alloc_inode(sb);
 	else
 		inode = kmem_cache_alloc(inode_cachep, GFP_KERNEL);
 
@@ -215,21 +232,18 @@ static struct inode *alloc_inode(struct super_block *sb)
 		return NULL;
 
 	if (unlikely(inode_init_always(sb, inode))) {
-		if (inode->i_sb->s_op->destroy_inode)
-			inode->i_sb->s_op->destroy_inode(inode);
-		else
-			kmem_cache_free(inode_cachep, inode);
+		if (ops->destroy_inode) {
+			ops->destroy_inode(inode);
+			if (!ops->free_inode)
+				return NULL;
+		}
+		inode->free_inode = ops->free_inode;
+		i_callback(&inode->i_rcu);
 		return NULL;
 	}
 
 	return inode;
 }
-
-void free_inode_nonrcu(struct inode *inode)
-{
-	kmem_cache_free(inode_cachep, inode);
-}
-EXPORT_SYMBOL(free_inode_nonrcu);
 
 void __destroy_inode(struct inode *inode)
 {
@@ -253,20 +267,19 @@ void __destroy_inode(struct inode *inode)
 }
 EXPORT_SYMBOL(__destroy_inode);
 
-static void i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	kmem_cache_free(inode_cachep, inode);
-}
-
 static void destroy_inode(struct inode *inode)
 {
+	const struct super_operations *ops = inode->i_sb->s_op;
+
 	BUG_ON(!list_empty(&inode->i_lru));
 	__destroy_inode(inode);
-	if (inode->i_sb->s_op->destroy_inode)
-		inode->i_sb->s_op->destroy_inode(inode);
-	else
-		call_rcu(&inode->i_rcu, i_callback);
+	if (ops->destroy_inode) {
+		ops->destroy_inode(inode);
+		if (!ops->free_inode)
+			return;
+	}
+	inode->free_inode = ops->free_inode;
+	call_rcu(&inode->i_rcu, i_callback);
 }
 
 /**
@@ -349,7 +362,7 @@ EXPORT_SYMBOL(inc_nlink);
 
 static void __address_space_init_once(struct address_space *mapping)
 {
-	INIT_RADIX_TREE(&mapping->i_pages, GFP_ATOMIC | __GFP_ACCOUNT);
+	xa_init_flags(&mapping->i_pages, XA_FLAGS_LOCK_IRQ);
 	init_rwsem(&mapping->i_mmap_rwsem);
 	INIT_LIST_HEAD(&mapping->private_list);
 	spin_lock_init(&mapping->private_lock);
@@ -804,6 +817,10 @@ repeat:
 			__wait_on_freeing_inode(inode);
 			goto repeat;
 		}
+		if (unlikely(inode->i_state & I_CREATING)) {
+			spin_unlock(&inode->i_lock);
+			return ERR_PTR(-ESTALE);
+		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
 		return inode;
@@ -830,6 +847,10 @@ repeat:
 		if (inode->i_state & (I_FREEING|I_WILL_FREE)) {
 			__wait_on_freeing_inode(inode);
 			goto repeat;
+		}
+		if (unlikely(inode->i_state & I_CREATING)) {
+			spin_unlock(&inode->i_lock);
+			return ERR_PTR(-ESTALE);
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
@@ -961,12 +982,25 @@ void unlock_new_inode(struct inode *inode)
 	lockdep_annotate_inode_mutex_key(inode);
 	spin_lock(&inode->i_lock);
 	WARN_ON(!(inode->i_state & I_NEW));
-	inode->i_state &= ~I_NEW;
+	inode->i_state &= ~I_NEW & ~I_CREATING;
 	smp_mb();
 	wake_up_bit(&inode->i_state, __I_NEW);
 	spin_unlock(&inode->i_lock);
 }
 EXPORT_SYMBOL(unlock_new_inode);
+
+void discard_new_inode(struct inode *inode)
+{
+	lockdep_annotate_inode_mutex_key(inode);
+	spin_lock(&inode->i_lock);
+	WARN_ON(!(inode->i_state & I_NEW));
+	inode->i_state &= ~I_NEW;
+	smp_mb();
+	wake_up_bit(&inode->i_state, __I_NEW);
+	spin_unlock(&inode->i_lock);
+	iput(inode);
+}
+EXPORT_SYMBOL(discard_new_inode);
 
 /**
  * lock_two_nondirectories - take two i_mutexes on non-directory objects
@@ -1029,6 +1063,7 @@ struct inode *inode_insert5(struct inode *inode, unsigned long hashval,
 {
 	struct hlist_head *head = inode_hashtable + hash(inode->i_sb, hashval);
 	struct inode *old;
+	bool creating = inode->i_state & I_CREATING;
 
 again:
 	spin_lock(&inode_hash_lock);
@@ -1039,6 +1074,8 @@ again:
 		 * Use the old inode instead of the preallocated one.
 		 */
 		spin_unlock(&inode_hash_lock);
+		if (IS_ERR(old))
+			return NULL;
 		wait_on_inode(old);
 		if (unlikely(inode_unhashed(old))) {
 			iput(old);
@@ -1060,6 +1097,8 @@ again:
 	inode->i_state |= I_NEW;
 	hlist_add_head(&inode->i_hash, head);
 	spin_unlock(&inode->i_lock);
+	if (!creating)
+		inode_sb_list_add(inode);
 unlock:
 	spin_unlock(&inode_hash_lock);
 
@@ -1094,12 +1133,13 @@ struct inode *iget5_locked(struct super_block *sb, unsigned long hashval,
 	struct inode *inode = ilookup5(sb, hashval, test, data);
 
 	if (!inode) {
-		struct inode *new = new_inode(sb);
+		struct inode *new = alloc_inode(sb);
 
 		if (new) {
+			new->i_state = 0;
 			inode = inode_insert5(new, hashval, test, set, data);
 			if (unlikely(inode != new))
-				iput(new);
+				destroy_inode(new);
 		}
 	}
 	return inode;
@@ -1128,6 +1168,8 @@ again:
 	inode = find_inode_fast(sb, head, ino);
 	spin_unlock(&inode_hash_lock);
 	if (inode) {
+		if (IS_ERR(inode))
+			return NULL;
 		wait_on_inode(inode);
 		if (unlikely(inode_unhashed(inode))) {
 			iput(inode);
@@ -1165,6 +1207,8 @@ again:
 		 */
 		spin_unlock(&inode_hash_lock);
 		destroy_inode(inode);
+		if (IS_ERR(old))
+			return NULL;
 		inode = old;
 		wait_on_inode(inode);
 		if (unlikely(inode_unhashed(inode))) {
@@ -1282,7 +1326,7 @@ struct inode *ilookup5_nowait(struct super_block *sb, unsigned long hashval,
 	inode = find_inode(sb, head, test, data);
 	spin_unlock(&inode_hash_lock);
 
-	return inode;
+	return IS_ERR(inode) ? NULL : inode;
 }
 EXPORT_SYMBOL(ilookup5_nowait);
 
@@ -1338,6 +1382,8 @@ again:
 	spin_unlock(&inode_hash_lock);
 
 	if (inode) {
+		if (IS_ERR(inode))
+			return NULL;
 		wait_on_inode(inode);
 		if (unlikely(inode_unhashed(inode))) {
 			iput(inode);
@@ -1421,11 +1467,16 @@ int insert_inode_locked(struct inode *inode)
 		}
 		if (likely(!old)) {
 			spin_lock(&inode->i_lock);
-			inode->i_state |= I_NEW;
+			inode->i_state |= I_NEW | I_CREATING;
 			hlist_add_head(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
 			spin_unlock(&inode_hash_lock);
 			return 0;
+		}
+		if (unlikely(old->i_state & I_CREATING)) {
+			spin_unlock(&old->i_lock);
+			spin_unlock(&inode_hash_lock);
+			return -EBUSY;
 		}
 		__iget(old);
 		spin_unlock(&old->i_lock);
@@ -1443,7 +1494,10 @@ EXPORT_SYMBOL(insert_inode_locked);
 int insert_inode_locked4(struct inode *inode, unsigned long hashval,
 		int (*test)(struct inode *, void *), void *data)
 {
-	struct inode *old = inode_insert5(inode, hashval, test, NULL, data);
+	struct inode *old;
+
+	inode->i_state |= I_CREATING;
+	old = inode_insert5(inode, hashval, test, NULL, data);
 
 	if (old != inode) {
 		iput(old);
@@ -1555,58 +1609,25 @@ sector_t bmap(struct inode *inode, sector_t block)
 EXPORT_SYMBOL(bmap);
 
 /*
- * Update times in overlayed inode from underlying real inode
- */
-static void update_ovl_inode_times(struct dentry *dentry, struct inode *inode,
-			       bool rcu)
-{
-	struct dentry *upperdentry;
-
-	/*
-	 * Nothing to do if in rcu or if non-overlayfs
-	 */
-	if (rcu || likely(!(dentry->d_flags & DCACHE_OP_REAL)))
-		return;
-
-	upperdentry = d_real(dentry, NULL, 0, D_REAL_UPPER);
-
-	/*
-	 * If file is on lower then we can't update atime, so no worries about
-	 * stale mtime/ctime.
-	 */
-	if (upperdentry) {
-		struct inode *realinode = d_inode(upperdentry);
-
-		if ((!timespec_equal(&inode->i_mtime, &realinode->i_mtime) ||
-		     !timespec_equal(&inode->i_ctime, &realinode->i_ctime))) {
-			inode->i_mtime = realinode->i_mtime;
-			inode->i_ctime = realinode->i_ctime;
-		}
-	}
-}
-
-/*
  * With relative atime, only update atime if the previous atime is
  * earlier than either the ctime or mtime or if at least a day has
  * passed since the last atime update.
  */
-static int relatime_need_update(const struct path *path, struct inode *inode,
-				struct timespec now, bool rcu)
+static int relatime_need_update(struct vfsmount *mnt, struct inode *inode,
+			     struct timespec64 now)
 {
 
-	if (!(path->mnt->mnt_flags & MNT_RELATIME))
+	if (!(mnt->mnt_flags & MNT_RELATIME))
 		return 1;
-
-	update_ovl_inode_times(path->dentry, inode, rcu);
 	/*
 	 * Is mtime younger than atime? If yes, update atime:
 	 */
-	if (timespec_compare(&inode->i_mtime, &inode->i_atime) >= 0)
+	if (timespec64_compare(&inode->i_mtime, &inode->i_atime) >= 0)
 		return 1;
 	/*
 	 * Is ctime younger than atime? If yes, update atime:
 	 */
-	if (timespec_compare(&inode->i_ctime, &inode->i_atime) >= 0)
+	if (timespec64_compare(&inode->i_ctime, &inode->i_atime) >= 0)
 		return 1;
 
 	/*
@@ -1621,7 +1642,7 @@ static int relatime_need_update(const struct path *path, struct inode *inode,
 	return 0;
 }
 
-int generic_update_time(struct inode *inode, struct timespec *time, int flags)
+int generic_update_time(struct inode *inode, struct timespec64 *time, int flags)
 {
 	int iflags = I_DIRTY_TIME;
 	bool dirty = false;
@@ -1649,9 +1670,9 @@ EXPORT_SYMBOL(generic_update_time);
  * This does the actual work of updating an inodes time or version.  Must have
  * had called mnt_want_write() before calling this.
  */
-static int update_time(struct inode *inode, struct timespec *time, int flags)
+static int update_time(struct inode *inode, struct timespec64 *time, int flags)
 {
-	int (*update_time)(struct inode *, struct timespec *, int);
+	int (*update_time)(struct inode *, struct timespec64 *, int);
 
 	update_time = inode->i_op->update_time ? inode->i_op->update_time :
 		generic_update_time;
@@ -1668,11 +1689,10 @@ static int update_time(struct inode *inode, struct timespec *time, int flags)
  *	This function automatically handles read only file systems and media,
  *	as well as the "noatime" flag and inode specific "noatime" markers.
  */
-bool __atime_needs_update(const struct path *path, struct inode *inode,
-			  bool rcu)
+bool atime_needs_update(const struct path *path, struct inode *inode)
 {
 	struct vfsmount *mnt = path->mnt;
-	struct timespec now;
+	struct timespec64 now;
 
 	if (inode->i_flags & S_NOATIME)
 		return false;
@@ -1695,10 +1715,10 @@ bool __atime_needs_update(const struct path *path, struct inode *inode,
 
 	now = current_time(inode);
 
-	if (!relatime_need_update(path, inode, now, rcu))
+	if (!relatime_need_update(mnt, inode, now))
 		return false;
 
-	if (timespec_equal(&inode->i_atime, &now))
+	if (timespec64_equal(&inode->i_atime, &now))
 		return false;
 
 	return true;
@@ -1708,9 +1728,9 @@ void touch_atime(const struct path *path)
 {
 	struct vfsmount *mnt = path->mnt;
 	struct inode *inode = d_inode(path->dentry);
-	struct timespec now;
+	struct timespec64 now;
 
-	if (!__atime_needs_update(path, inode, false))
+	if (!atime_needs_update(path, inode))
 		return;
 
 	if (!sb_start_write_trylock(inode->i_sb))
@@ -1810,8 +1830,13 @@ int file_remove_privs(struct file *file)
 	int kill;
 	int error = 0;
 
-	/* Fast path for nothing security related */
-	if (IS_NOSEC(inode))
+	/*
+	 * Fast path for nothing security related.
+	 * As well for non-regular files, e.g. blkdev inodes.
+	 * For example, blkdev_write_iter() might get here
+	 * trying to remove privs which it is not allowed to.
+	 */
+	if (IS_NOSEC(inode) || !S_ISREG(inode->i_mode))
 		return 0;
 
 	kill = dentry_needs_remove_privs(dentry);
@@ -1842,7 +1867,7 @@ EXPORT_SYMBOL(file_remove_privs);
 int file_update_time(struct file *file)
 {
 	struct inode *inode = file_inode(file);
-	struct timespec now;
+	struct timespec64 now;
 	int sync_it = 0;
 	int ret;
 
@@ -1851,10 +1876,10 @@ int file_update_time(struct file *file)
 		return 0;
 
 	now = current_time(inode);
-	if (!timespec_equal(&inode->i_mtime, &now))
+	if (!timespec64_equal(&inode->i_mtime, &now))
 		sync_it = S_MTIME;
 
-	if (!timespec_equal(&inode->i_ctime, &now))
+	if (!timespec64_equal(&inode->i_ctime, &now))
 		sync_it |= S_CTIME;
 
 	if (IS_I_VERSION(inode) && inode_iversion_need_inc(inode))
@@ -1999,8 +2024,14 @@ void inode_init_owner(struct inode *inode, const struct inode *dir,
 	inode->i_uid = current_fsuid();
 	if (dir && dir->i_mode & S_ISGID) {
 		inode->i_gid = dir->i_gid;
+
+		/* Directories are special, and always inherit S_ISGID */
 		if (S_ISDIR(mode))
 			mode |= S_ISGID;
+		else if ((mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP) &&
+			 !in_group_p(inode->i_gid) &&
+			 !capable_wrt_inode_uidgid(dir, CAP_FSETID))
+			mode &= ~S_ISGID;
 	} else
 		inode->i_gid = current_fsgid();
 	inode->i_mode = mode;
@@ -2080,14 +2111,8 @@ EXPORT_SYMBOL(inode_dio_wait);
 void inode_set_flags(struct inode *inode, unsigned int flags,
 		     unsigned int mask)
 {
-	unsigned int old_flags, new_flags;
-
 	WARN_ON_ONCE(flags & ~mask);
-	do {
-		old_flags = READ_ONCE(inode->i_flags);
-		new_flags = (old_flags & ~mask) | flags;
-	} while (unlikely(cmpxchg(&inode->i_flags, old_flags,
-				  new_flags) != old_flags));
+	set_mask_bits(&inode->i_flags, mask, flags);
 }
 EXPORT_SYMBOL(inode_set_flags);
 
@@ -2096,6 +2121,30 @@ void inode_nohighmem(struct inode *inode)
 	mapping_set_gfp_mask(inode->i_mapping, GFP_USER);
 }
 EXPORT_SYMBOL(inode_nohighmem);
+
+/**
+ * timespec64_trunc - Truncate timespec64 to a granularity
+ * @t: Timespec64
+ * @gran: Granularity in ns.
+ *
+ * Truncate a timespec64 to a granularity. Always rounds down. gran must
+ * not be 0 nor greater than a second (NSEC_PER_SEC, or 10^9 ns).
+ */
+struct timespec64 timespec64_trunc(struct timespec64 t, unsigned gran)
+{
+	/* Avoid division in the common cases 1 ns and 1 s. */
+	if (gran == 1) {
+		/* nothing */
+	} else if (gran == NSEC_PER_SEC) {
+		t.tv_nsec = 0;
+	} else if (gran > 1 && gran < NSEC_PER_SEC) {
+		t.tv_nsec -= t.tv_nsec % gran;
+	} else {
+		WARN(1, "illegal file time granularity: %u", gran);
+	}
+	return t;
+}
+EXPORT_SYMBOL(timespec64_trunc);
 
 /**
  * current_time - Return FS time
@@ -2107,15 +2156,17 @@ EXPORT_SYMBOL(inode_nohighmem);
  * Note that inode and inode->sb cannot be NULL.
  * Otherwise, the function warns and returns time without truncation.
  */
-struct timespec current_time(struct inode *inode)
+struct timespec64 current_time(struct inode *inode)
 {
-	struct timespec now = current_kernel_time();
+	struct timespec64 now;
+
+	ktime_get_coarse_real_ts64(&now);
 
 	if (unlikely(!inode->i_sb)) {
 		WARN(1, "current_time() called with uninitialized super_block in the inode");
 		return now;
 	}
 
-	return timespec_trunc(now, inode->i_sb->s_time_gran);
+	return timespec64_trunc(now, inode->i_sb->s_time_gran);
 }
 EXPORT_SYMBOL(current_time);

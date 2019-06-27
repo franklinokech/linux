@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * proc/fs/generic.c --- generic routines for the proc-fs
  *
@@ -256,7 +257,7 @@ struct dentry *proc_lookup_de(struct inode *dir, struct dentry *dentry,
 		inode = proc_get_inode(dir->i_sb, de);
 		if (!inode)
 			return ERR_PTR(-ENOMEM);
-		d_set_d_op(dentry, &proc_misc_dentry_ops);
+		d_set_d_op(dentry, de->proc_dops);
 		return d_splice_alias(inode, dentry);
 	}
 	read_unlock(&proc_subdir_lock);
@@ -286,9 +287,9 @@ int proc_readdir_de(struct file *file, struct dir_context *ctx,
 	if (!dir_emit_dots(file, ctx))
 		return 0;
 
+	i = ctx->pos - 2;
 	read_lock(&proc_subdir_lock);
 	de = pde_subdir_first(de);
-	i = ctx->pos - 2;
 	for (;;) {
 		if (!de) {
 			read_unlock(&proc_subdir_lock);
@@ -309,8 +310,8 @@ int proc_readdir_de(struct file *file, struct dir_context *ctx,
 			pde_put(de);
 			return 0;
 		}
-		read_lock(&proc_subdir_lock);
 		ctx->pos++;
+		read_lock(&proc_subdir_lock);
 		next = pde_subdir_next(de);
 		pde_put(de);
 		de = next;
@@ -409,7 +410,7 @@ static struct proc_dir_entry *__proc_create(struct proc_dir_entry **parent,
 	if (!ent)
 		goto out;
 
-	if (qstr.len + 1 <= sizeof(ent->inline_name)) {
+	if (qstr.len + 1 <= SIZEOF_PDE_INLINE_NAME) {
 		ent->name = ent->inline_name;
 	} else {
 		ent->name = kmalloc(qstr.len + 1, GFP_KERNEL);
@@ -428,6 +429,8 @@ static struct proc_dir_entry *__proc_create(struct proc_dir_entry **parent,
 	spin_lock_init(&ent->pde_unload_lock);
 	INIT_LIST_HEAD(&ent->pde_openers);
 	proc_set_user(ent, (*parent)->uid, (*parent)->gid);
+
+	ent->proc_dops = &proc_misc_dentry_ops;
 
 out:
 	return ent;
@@ -564,11 +567,20 @@ static int proc_seq_open(struct inode *inode, struct file *file)
 	return seq_open(file, de->seq_ops);
 }
 
+static int proc_seq_release(struct inode *inode, struct file *file)
+{
+	struct proc_dir_entry *de = PDE(inode);
+
+	if (de->state_size)
+		return seq_release_private(inode, file);
+	return seq_release(inode, file);
+}
+
 static const struct file_operations proc_seq_fops = {
 	.open		= proc_seq_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
-	.release	= seq_release,
+	.release	= proc_seq_release,
 };
 
 struct proc_dir_entry *proc_create_seq_private(const char *name, umode_t mode,
@@ -740,3 +752,27 @@ void *PDE_DATA(const struct inode *inode)
 	return __PDE_DATA(inode);
 }
 EXPORT_SYMBOL(PDE_DATA);
+
+/*
+ * Pull a user buffer into memory and pass it to the file's write handler if
+ * one is supplied.  The ->write() method is permitted to modify the
+ * kernel-side buffer.
+ */
+ssize_t proc_simple_write(struct file *f, const char __user *ubuf, size_t size,
+			  loff_t *_pos)
+{
+	struct proc_dir_entry *pde = PDE(file_inode(f));
+	char *buf;
+	int ret;
+
+	if (!pde->write)
+		return -EACCES;
+	if (size == 0 || size > PAGE_SIZE - 1)
+		return -EINVAL;
+	buf = memdup_user_nul(ubuf, size);
+	if (IS_ERR(buf))
+		return PTR_ERR(buf);
+	ret = pde->write(f, buf, size);
+	kfree(buf);
+	return ret == 0 ? size : ret;
+}

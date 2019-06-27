@@ -29,7 +29,6 @@
 
 #include <linux/types.h>
 #include <linux/fs.h>
-#include <linux/signal.h>
 #include <asm/byteorder.h>
 
 typedef __kernel_ulong_t aio_context_t;
@@ -51,6 +50,8 @@ enum {
  *
  * IOCB_FLAG_RESFD - Set if the "aio_resfd" member of the "struct iocb"
  *                   is valid.
+ * IOCB_FLAG_IOPRIO - Set if the "aio_reqprio" member of the "struct iocb"
+ *                    is valid.
  */
 #define IOCB_FLAG_RESFD		(1 << 0)
 #define IOCB_FLAG_IOPRIO	(1 << 1)
@@ -107,11 +108,6 @@ struct iocb {
 
 #undef IFBIG
 #undef IFLITTLE
-
-struct __aio_sigset {
-	sigset_t __user	*sigmask;
-	size_t		sigsetsize;
-};
 
 #endif /* __LINUX__AIO_ABI_H */
 

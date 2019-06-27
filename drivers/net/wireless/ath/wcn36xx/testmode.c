@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -132,8 +132,8 @@ int wcn36xx_tm_cmd(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	unsigned short attr;
 
 	wcn36xx_dbg_dump(WCN36XX_DBG_TESTMODE_DUMP, "Data:", data, len);
-	ret = nla_parse(tb, WCN36XX_TM_ATTR_MAX, data, len,
-			wcn36xx_tm_policy, NULL);
+	ret = nla_parse_deprecated(tb, WCN36XX_TM_ATTR_MAX, data, len,
+				   wcn36xx_tm_policy, NULL);
 	if (ret)
 		return ret;
 

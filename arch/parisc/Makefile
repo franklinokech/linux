@@ -65,14 +65,17 @@ endif
 # kernel.
 cflags-y	+= -mdisable-fpregs
 
-# Without this, "ld -r" results in .text sections that are too big
-# (> 0x40000) for branches to reach stubs.
-cflags-y	+= -ffunction-sections
-
 # Use long jumps instead of long branches (needed if your linker fails to
 # link a too big vmlinux executable). Not enabled for building modules.
 ifdef CONFIG_MLONGCALLS
 KBUILD_CFLAGS_KERNEL += -mlong-calls
+endif
+
+# Without this, "ld -r" results in .text sections that are too big (> 0x40000)
+# for branches to reach stubs. And multiple .text sections trigger a warning
+# when creating the sysfs module information section.
+ifndef CONFIG_64BIT
+KBUILD_CFLAGS_MODULE += -ffunction-sections
 endif
 
 # select which processor to optimise for
@@ -161,11 +164,5 @@ define archhelp
 	@echo  '  zinstall	- Install compressed vmlinuz kernel'
 endef
 
-# we require gcc 3.3 or above to compile the kernel
-archprepare: checkbin
-checkbin:
-	@if test "$(cc-version)" -lt "0303"; then \
-		echo -n "Sorry, GCC v3.3 or above is required to build " ; \
-		echo "the kernel." ; \
-		false ; \
-	fi
+archheaders:
+	$(Q)$(MAKE) $(build)=arch/parisc/kernel/syscalls all

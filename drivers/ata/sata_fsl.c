@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * drivers/ata/sata_fsl.c
  *
@@ -7,12 +8,6 @@
  * Li Yang <leoli@freescale.com>
  *
  * Copyright (c) 2006-2007, 2011-2012 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute  it and/or modify it
- * under  the terms of  the GNU General  Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
- *
  */
 
 #include <linux/kernel.h>
@@ -395,12 +390,6 @@ static inline unsigned int sata_fsl_tag(unsigned int tag,
 {
 	/* We let libATA core do actual (queue) tag allocation */
 
-	/* all non NCQ/queued commands should have tag#0 */
-	if (ata_tag_internal(tag)) {
-		DPRINTK("mapping internal cmds to tag#0\n");
-		return 0;
-	}
-
 	if (unlikely(tag >= SATA_FSL_QUEUE_DEPTH)) {
 		DPRINTK("tag %d invalid : out of range\n", tag);
 		return 0;
@@ -735,8 +724,8 @@ static int sata_fsl_port_start(struct ata_port *ap)
 	if (!pp)
 		return -ENOMEM;
 
-	mem = dma_zalloc_coherent(dev, SATA_FSL_PORT_PRIV_DMA_SZ, &mem_dma,
-				  GFP_KERNEL);
+	mem = dma_alloc_coherent(dev, SATA_FSL_PORT_PRIV_DMA_SZ, &mem_dma,
+				 GFP_KERNEL);
 	if (!mem) {
 		kfree(pp);
 		return -ENOMEM;
@@ -1229,8 +1218,7 @@ static void sata_fsl_host_intr(struct ata_port *ap)
 
 	/* Workaround for data length mismatch errata */
 	if (unlikely(hstatus & INT_ON_DATA_LENGTH_MISMATCH)) {
-		for (tag = 0; tag < ATA_MAX_QUEUE; tag++) {
-			qc = ata_qc_from_tag(ap, tag);
+		ata_qc_for_each_with_internal(ap, qc, tag) {
 			if (qc && ata_is_atapi(qc->tf.protocol)) {
 				u32 hcontrol;
 				/* Set HControl[27] to clear error registers */

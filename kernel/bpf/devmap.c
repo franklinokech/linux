@@ -1,13 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2017 Covalent IO, Inc. http://covalent.io
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
  */
 
 /* Devmaps primary use is as a backend map for XDP BPF helper call
@@ -161,7 +153,11 @@ static void dev_map_free(struct bpf_map *map)
 	list_del_rcu(&dtab->list);
 	spin_unlock(&dev_map_lock);
 
+	bpf_clear_redirect_map(map);
 	synchronize_rcu();
+
+	/* Make sure prior __dev_map_entry_free() have completed. */
+	rcu_barrier();
 
 	/* To ensure all pending flush operations have completed wait for flush
 	 * bitmap to indicate all flush_needed bits to be zero on _all_ cpus.
@@ -182,6 +178,7 @@ static void dev_map_free(struct bpf_map *map)
 		if (!dev)
 			continue;
 
+		free_percpu(dev->bulkq);
 		dev_put(dev->dev);
 		kfree(dev);
 	}
@@ -217,7 +214,8 @@ void __dev_map_insert_ctx(struct bpf_map *map, u32 bit)
 }
 
 static int bq_xmit_all(struct bpf_dtab_netdev *obj,
-		       struct xdp_bulk_queue *bq, u32 flags)
+		       struct xdp_bulk_queue *bq, u32 flags,
+		       bool in_napi_ctx)
 {
 	struct net_device *dev = obj->dev;
 	int sent = 0, drops = 0, err = 0;
@@ -254,7 +252,10 @@ error:
 		struct xdp_frame *xdpf = bq->q[i];
 
 		/* RX path under NAPI protection, can return frames faster */
-		xdp_return_frame_rx_napi(xdpf);
+		if (likely(in_napi_ctx))
+			xdp_return_frame_rx_napi(xdpf);
+		else
+			xdp_return_frame(xdpf);
 		drops++;
 	}
 	goto out;
@@ -273,6 +274,7 @@ void __dev_map_flush(struct bpf_map *map)
 	unsigned long *bitmap = this_cpu_ptr(dtab->flush_needed);
 	u32 bit;
 
+	rcu_read_lock();
 	for_each_set_bit(bit, bitmap, map->max_entries) {
 		struct bpf_dtab_netdev *dev = READ_ONCE(dtab->netdev_map[bit]);
 		struct xdp_bulk_queue *bq;
@@ -283,11 +285,12 @@ void __dev_map_flush(struct bpf_map *map)
 		if (unlikely(!dev))
 			continue;
 
-		__clear_bit(bit, bitmap);
-
 		bq = this_cpu_ptr(dev->bulkq);
-		bq_xmit_all(dev, bq, XDP_XMIT_FLUSH);
+		bq_xmit_all(dev, bq, XDP_XMIT_FLUSH, true);
+
+		__clear_bit(bit, bitmap);
 	}
+	rcu_read_unlock();
 }
 
 /* rcu_read_lock (from syscall and BPF contexts) ensures that if a delete and/or
@@ -316,7 +319,7 @@ static int bq_enqueue(struct bpf_dtab_netdev *obj, struct xdp_frame *xdpf,
 	struct xdp_bulk_queue *bq = this_cpu_ptr(obj->bulkq);
 
 	if (unlikely(bq->count == DEV_MAP_BULK_SIZE))
-		bq_xmit_all(obj, bq, 0);
+		bq_xmit_all(obj, bq, 0, true);
 
 	/* Ingress dev_rx will be the same for all xdp_frame's in
 	 * bulk_queue, because bq stored per-CPU and must be flushed
@@ -334,15 +337,34 @@ int dev_map_enqueue(struct bpf_dtab_netdev *dst, struct xdp_buff *xdp,
 {
 	struct net_device *dev = dst->dev;
 	struct xdp_frame *xdpf;
+	int err;
 
 	if (!dev->netdev_ops->ndo_xdp_xmit)
 		return -EOPNOTSUPP;
+
+	err = xdp_ok_fwd_dev(dev, xdp->data_end - xdp->data);
+	if (unlikely(err))
+		return err;
 
 	xdpf = convert_to_xdp_frame(xdp);
 	if (unlikely(!xdpf))
 		return -EOVERFLOW;
 
 	return bq_enqueue(dst, xdpf, dev_rx);
+}
+
+int dev_map_generic_redirect(struct bpf_dtab_netdev *dst, struct sk_buff *skb,
+			     struct bpf_prog *xdp_prog)
+{
+	int err;
+
+	err = xdp_ok_fwd_dev(dst->dev, skb->len);
+	if (unlikely(err))
+		return err;
+	skb->dev = dst->dev;
+	generic_xdp_tx(skb, xdp_prog);
+
+	return 0;
 }
 
 static void *dev_map_lookup_elem(struct bpf_map *map, void *key)
@@ -361,13 +383,15 @@ static void dev_map_flush_old(struct bpf_dtab_netdev *dev)
 
 		int cpu;
 
+		rcu_read_lock();
 		for_each_online_cpu(cpu) {
 			bitmap = per_cpu_ptr(dev->dtab->flush_needed, cpu);
 			__clear_bit(dev->bit, bitmap);
 
 			bq = per_cpu_ptr(dev->bulkq, cpu);
-			bq_xmit_all(dev, bq, XDP_XMIT_FLUSH);
+			bq_xmit_all(dev, bq, XDP_XMIT_FLUSH, false);
 		}
+		rcu_read_unlock();
 	}
 }
 
@@ -465,6 +489,7 @@ const struct bpf_map_ops dev_map_ops = {
 	.map_lookup_elem = dev_map_lookup_elem,
 	.map_update_elem = dev_map_update_elem,
 	.map_delete_elem = dev_map_delete_elem,
+	.map_check_btf = map_check_no_btf,
 };
 
 static int dev_map_notification(struct notifier_block *notifier,
@@ -487,8 +512,7 @@ static int dev_map_notification(struct notifier_block *notifier,
 				struct bpf_dtab_netdev *dev, *odev;
 
 				dev = READ_ONCE(dtab->netdev_map[i]);
-				if (!dev ||
-				    dev->dev->ifindex != netdev->ifindex)
+				if (!dev || netdev != dev->dev)
 					continue;
 				odev = cmpxchg(&dtab->netdev_map[i], dev, NULL);
 				if (dev == odev)

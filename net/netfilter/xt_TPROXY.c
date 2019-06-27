@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Transparent proxy support for Linux/iptables
  *
  * Copyright (c) 2006-2010 BalaBit IT Ltd.
  * Author: Balazs Scheidler, Krisztian Kovacs
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>
@@ -36,15 +32,6 @@
 #include <net/netfilter/nf_tproxy.h>
 #include <linux/netfilter/xt_TPROXY.h>
 
-/* assign a socket to the skb -- consumes sk */
-static void
-nf_tproxy_assign_sock(struct sk_buff *skb, struct sock *sk)
-{
-	skb_orphan(skb);
-	skb->sk = sk;
-	skb->destructor = sock_edemux;
-}
-
 static unsigned int
 tproxy_tg4(struct net *net, struct sk_buff *skb, __be32 laddr, __be16 lport,
 	   u_int32_t mark_mask, u_int32_t mark_value)
@@ -61,7 +48,7 @@ tproxy_tg4(struct net *net, struct sk_buff *skb, __be32 laddr, __be16 lport,
 	 * addresses, this happens if the redirect already happened
 	 * and the current packet belongs to an already established
 	 * connection */
-	sk = nf_tproxy_get_sock_v4(net, skb, hp, iph->protocol,
+	sk = nf_tproxy_get_sock_v4(net, skb, iph->protocol,
 				   iph->saddr, iph->daddr,
 				   hp->source, hp->dest,
 				   skb->dev, NF_TPROXY_LOOKUP_ESTABLISHED);
@@ -77,7 +64,7 @@ tproxy_tg4(struct net *net, struct sk_buff *skb, __be32 laddr, __be16 lport,
 	else if (!sk)
 		/* no, there's no established connection, check if
 		 * there's a listener on the redirected addr/port */
-		sk = nf_tproxy_get_sock_v4(net, skb, hp, iph->protocol,
+		sk = nf_tproxy_get_sock_v4(net, skb, iph->protocol,
 					   iph->saddr, laddr,
 					   hp->source, lport,
 					   skb->dev, NF_TPROXY_LOOKUP_LISTENER);
@@ -150,7 +137,7 @@ tproxy_tg6_v1(struct sk_buff *skb, const struct xt_action_param *par)
 	 * addresses, this happens if the redirect already happened
 	 * and the current packet belongs to an already established
 	 * connection */
-	sk = nf_tproxy_get_sock_v6(xt_net(par), skb, thoff, hp, tproto,
+	sk = nf_tproxy_get_sock_v6(xt_net(par), skb, thoff, tproto,
 				   &iph->saddr, &iph->daddr,
 				   hp->source, hp->dest,
 				   xt_in(par), NF_TPROXY_LOOKUP_ESTABLISHED);
@@ -171,7 +158,7 @@ tproxy_tg6_v1(struct sk_buff *skb, const struct xt_action_param *par)
 	else if (!sk)
 		/* no there's no established connection, check if
 		 * there's a listener on the redirected addr/port */
-		sk = nf_tproxy_get_sock_v6(xt_net(par), skb, thoff, hp,
+		sk = nf_tproxy_get_sock_v6(xt_net(par), skb, thoff,
 					   tproto, &iph->saddr, laddr,
 					   hp->source, lport,
 					   xt_in(par), NF_TPROXY_LOOKUP_LISTENER);

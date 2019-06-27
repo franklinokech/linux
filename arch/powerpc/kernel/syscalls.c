@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Implementation of various system calls for Linux/PowerPC
  *
@@ -11,12 +12,6 @@
  * This file contains various random system calls that
  * have a non-standard calling sequence on the Linux/PPC
  * platform.
- *
- *  This program is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU General Public License
- *  as published by the Free Software Foundation; either version
- *  2 of the License, or (at your option) any later version.
- *
  */
 
 #include <linux/errno.h>
@@ -62,9 +57,6 @@ out:
 	return ret;
 }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpragmas"
-#pragma GCC diagnostic ignored "-Wattribute-alias"
 SYSCALL_DEFINE6(mmap2, unsigned long, addr, size_t, len,
 		unsigned long, prot, unsigned long, flags,
 		unsigned long, fd, unsigned long, pgoff)
@@ -78,7 +70,6 @@ SYSCALL_DEFINE6(mmap, unsigned long, addr, size_t, len,
 {
 	return do_mmap2(addr, len, prot, flags, fd, offset, PAGE_SHIFT);
 }
-#pragma GCC diagnostic pop
 
 #ifdef CONFIG_PPC32
 /*
@@ -93,7 +84,7 @@ ppc_select(int n, fd_set __user *inp, fd_set __user *outp, fd_set __user *exp, s
 	if ( (unsigned long)n >= 4096 )
 	{
 		unsigned long __user *buffer = (unsigned long __user *)n;
-		if (!access_ok(VERIFY_READ, buffer, 5*sizeof(unsigned long))
+		if (!access_ok(buffer, 5*sizeof(unsigned long))
 		    || __get_user(n, buffer)
 		    || __get_user(inp, ((fd_set __user * __user *)(buffer+1)))
 		    || __get_user(outp, ((fd_set  __user * __user *)(buffer+2)))
@@ -127,7 +118,7 @@ long ppc_fadvise64_64(int fd, int advice, u32 offset_high, u32 offset_low,
 				 (u64)len_high << 32 | len_low, advice);
 }
 
-long sys_switch_endian(void)
+SYSCALL_DEFINE0(switch_endian)
 {
 	struct thread_info *ti;
 

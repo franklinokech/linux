@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Ethernet netdevice using ATM AAL5 as underlying carrier
  * (RFC1483 obsoleted by RFC2684) for Linux
@@ -252,8 +253,7 @@ static int br2684_xmit_vcc(struct sk_buff *skb, struct net_device *dev,
 
 	ATM_SKB(skb)->vcc = atmvcc = brvcc->atmvcc;
 	pr_debug("atm_skb(%p)->vcc(%p)->dev(%p)\n", skb, atmvcc, atmvcc->dev);
-	refcount_add(skb->truesize, &sk_atm(atmvcc)->sk_wmem_alloc);
-	ATM_SKB(skb)->atm_options = atmvcc->atm_options;
+	atm_account_tx(atmvcc, skb);
 	dev->stats.tx_packets++;
 	dev->stats.tx_bytes += skb->len;
 

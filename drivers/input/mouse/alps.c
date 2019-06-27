@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ALPS touchpad PS/2 mouse driver
  *
@@ -9,10 +10,6 @@
  *
  * ALPS detection, tap switching and status querying info is taken from
  * tpconfig utility (by C. Scott Ananian and Bruce Kall).
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
  */
 
 #include <linux/slab.h>
@@ -212,7 +209,7 @@ static void alps_set_abs_params_v7(struct alps_data *priv,
 static void alps_set_abs_params_ss4_v2(struct alps_data *priv,
 				       struct input_dev *dev1);
 
-/* Packet formats are described in Documentation/input/alps.txt */
+/* Packet formats are described in Documentation/input/devices/alps.rst */
 
 static bool alps_is_valid_first_byte(struct alps_data *priv,
 				     unsigned char data)

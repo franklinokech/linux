@@ -1,9 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2014-2017 Broadcom
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __BCMGENET_H__
@@ -185,6 +182,9 @@ struct bcmgenet_mib_counters {
 #define UMAC_MAC0			0x00C
 #define UMAC_MAC1			0x010
 #define UMAC_MAX_FRAME_LEN		0x014
+
+#define UMAC_MODE			0x44
+#define  MODE_LINK_STATUS		(1 << 5)
 
 #define UMAC_EEE_CTRL			0x064
 #define  EN_LPI_RX_PAUSE		(1 << 0)

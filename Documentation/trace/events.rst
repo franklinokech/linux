@@ -8,7 +8,7 @@ Event Tracing
 1. Introduction
 ===============
 
-Tracepoints (see Documentation/trace/tracepoints.txt) can be used
+Tracepoints (see Documentation/trace/tracepoints.rst) can be used
 without creating custom kernel modules to register probe functions
 using the event tracing infrastructure.
 
@@ -524,4 +524,4 @@ The following commands are supported:
   totals derived from one or more trace event format fields and/or
   event counts (hitcount).
 
-  See Documentation/trace/histogram.txt for details and examples.
+  See Documentation/trace/histogram.rst for details and examples.

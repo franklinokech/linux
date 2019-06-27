@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * algif_skcipher: User-space interface for skcipher algorithms
  *
  * This file provides the user-space API for symmetric key ciphers.
  *
  * Copyright (c) 2010 Herbert Xu <herbert@gondor.apana.org.au>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option)
- * any later version.
  *
  * The following concept of the memory management is used:
  *
@@ -206,7 +202,7 @@ static struct proto_ops algif_skcipher_ops = {
 	.sendmsg	=	skcipher_sendmsg,
 	.sendpage	=	af_alg_sendpage,
 	.recvmsg	=	skcipher_recvmsg,
-	.poll_mask	=	af_alg_poll_mask,
+	.poll		=	af_alg_poll,
 };
 
 static int skcipher_check_key(struct socket *sock)
@@ -302,7 +298,7 @@ static struct proto_ops algif_skcipher_ops_nokey = {
 	.sendmsg	=	skcipher_sendmsg_nokey,
 	.sendpage	=	skcipher_sendpage_nokey,
 	.recvmsg	=	skcipher_recvmsg_nokey,
-	.poll_mask	=	af_alg_poll_mask,
+	.poll		=	af_alg_poll,
 };
 
 static void *skcipher_bind(const char *name, u32 type, u32 mask)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Frontswap frontend
  *
@@ -7,8 +8,6 @@
  *
  * Copyright (C) 2009-2012 Oracle Corp.  All rights reserved.
  * Author: Dan Magenheimer
- *
- * This work is licensed under the terms of the GNU GPL, version 2.
  */
 
 #include <linux/mman.h>
@@ -486,12 +485,11 @@ static int __init init_frontswap(void)
 	struct dentry *root = debugfs_create_dir("frontswap", NULL);
 	if (root == NULL)
 		return -ENXIO;
-	debugfs_create_u64("loads", S_IRUGO, root, &frontswap_loads);
-	debugfs_create_u64("succ_stores", S_IRUGO, root, &frontswap_succ_stores);
-	debugfs_create_u64("failed_stores", S_IRUGO, root,
-				&frontswap_failed_stores);
-	debugfs_create_u64("invalidates", S_IRUGO,
-				root, &frontswap_invalidates);
+	debugfs_create_u64("loads", 0444, root, &frontswap_loads);
+	debugfs_create_u64("succ_stores", 0444, root, &frontswap_succ_stores);
+	debugfs_create_u64("failed_stores", 0444, root,
+			   &frontswap_failed_stores);
+	debugfs_create_u64("invalidates", 0444, root, &frontswap_invalidates);
 #endif
 	return 0;
 }

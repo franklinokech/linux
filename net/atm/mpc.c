@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #define pr_fmt(fmt) KBUILD_MODNAME ":%s: " fmt, __func__
 
 #include <linux/kernel.h>
@@ -555,8 +556,7 @@ static int send_via_shortcut(struct sk_buff *skb, struct mpoa_client *mpc)
 					sizeof(struct llc_snap_hdr));
 	}
 
-	refcount_add(skb->truesize, &sk_atm(entry->shortcut)->sk_wmem_alloc);
-	ATM_SKB(skb)->atm_options = entry->shortcut->atm_options;
+	atm_account_tx(entry->shortcut, skb);
 	entry->shortcut->send(entry->shortcut, skb);
 	entry->packets_fwded++;
 	mpc->in_ops->put(entry);

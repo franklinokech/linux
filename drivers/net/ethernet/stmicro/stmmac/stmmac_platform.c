@@ -1,19 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*******************************************************************************
   This contains the functions to handle the platform driver.
 
   Copyright (C) 2007-2011  STMicroelectronics Ltd
 
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-  more details.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
 
   Author: Giuseppe Cavallaro <peppe.cavallaro@st.com>
 *******************************************************************************/
@@ -67,7 +57,7 @@ static int dwmac1000_validate_mcast_bins(int mcast_bins)
  * Description:
  * This function validates the number of Unicast address entries supported
  * by a particular Synopsys 10/100/1000 controller. The Synopsys controller
- * supports 1, 32, 64, or 128 Unicast filter entries for it's Unicast filter
+ * supports 1..32, 64, or 128 Unicast filter entries for it's Unicast filter
  * logic. This function validates a valid, supported configuration is
  * selected, and defaults to 1 Unicast address if an unsupported
  * configuration is selected.
@@ -77,8 +67,7 @@ static int dwmac1000_validate_ucast_entries(int ucast_entries)
 	int x = ucast_entries;
 
 	switch (x) {
-	case 1:
-	case 32:
+	case 1 ... 32:
 	case 64:
 	case 128:
 		break;
@@ -94,7 +83,6 @@ static int dwmac1000_validate_ucast_entries(int ucast_entries)
 /**
  * stmmac_axi_setup - parse DT parameters for programming the AXI register
  * @pdev: platform device
- * @priv: driver private struct.
  * Description:
  * if required, from device-tree the AXI internal register can be tuned
  * by using platform parameters.
@@ -410,6 +398,12 @@ stmmac_probe_config_dt(struct platform_device *pdev, const char **mac)
 	/* Default to phy auto-detection */
 	plat->phy_addr = -1;
 
+	/* Default to get clk_csr from stmmac_clk_crs_set(),
+	 * or get clk_csr from device tree.
+	 */
+	plat->clk_csr = -1;
+	of_property_read_u32(np, "clk_csr", &plat->clk_csr);
+
 	/* "snps,phy-addr" is not a standard property. Mark it as deprecated
 	 * and warn of its use. Remove this when phy node support is added.
 	 */
@@ -485,6 +479,12 @@ stmmac_probe_config_dt(struct platform_device *pdev, const char **mac)
 		plat->enh_desc = 1;
 		plat->bugged_jumbo = 1;
 		plat->force_sf_dma_mode = 1;
+	}
+
+	if (of_device_is_compatible(np, "snps,dwxgmac")) {
+		plat->has_xgmac = 1;
+		plat->pmt = 1;
+		plat->tso_en = of_property_read_bool(np, "snps,tso");
 	}
 
 	dma_cfg = devm_kzalloc(&pdev->dev, sizeof(*dma_cfg),
